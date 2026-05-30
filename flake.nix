@@ -21,6 +21,24 @@
     let
       ulib = unpins-lib.lib;
 
+      # Curated man set: the three tools we ship (heif-enc/heif-dec/heif-info).
+      # libheif also installs heif-thumbnailer.1, but WITH_EXAMPLE_HEIF_THUMB=OFF
+      # drops that tool, so its page is excluded. The pages are static source
+      # files (examples/*.1), byte-identical on every platform — native harvests
+      # them from its own build tree (multicall.nix installs them into
+      # $out/share/man so withMan picks them up). The mingw cross builds no man
+      # and there's no nixpkgs `heif` attr to graft, so it gets this same set via
+      # winManRoot (x86_64-linux, where the cross runs).
+      heifMan =
+        let p = unpins-lib.inputs.nixpkgs.legacyPackages.x86_64-linux;
+        in p.runCommand "heif-man" { } ''
+          mkdir -p $out/share/man/man1
+          cp ${p.libheif.src}/examples/heif-enc.1 \
+             ${p.libheif.src}/examples/heif-dec.1 \
+             ${p.libheif.src}/examples/heif-info.1 \
+             $out/share/man/man1/
+        '';
+
       # libheif with apps + encoders ON, wired onto a (static) pkgs scope.
       # Codec-chain fixes mirror avif/chafa: x265 (pkgsStatic emits split
       # 8/10/12-bit archives + rm's the .a in postInstall — nativeFixes.x265
@@ -121,6 +139,10 @@
     ulib.mkStandaloneFlake {
       inherit self;
       name = "heif";
+      # Embed heif-enc/heif-dec/heif-info man on every platform. Native harvests
+      # $out/share/man (installed by multicall.nix); the mingw cross has no nixpkgs
+      # `heif` attr to graft, so winManRoot supplies the same curated set.
+      winManRoot = heifMan;
       # Multicall: `heif <applet> [args]` dispatches by argv[0]; the bare binary
       # takes the applet as its first arg. Smoke through that form.
       smoke = [ "heif-enc" "--version" ];

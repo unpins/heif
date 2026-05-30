@@ -3,6 +3,11 @@
 Standalone, self-contained build of the [libheif](https://github.com/strukturag/libheif)
 image tools — **encode, decode and inspect HEIC / HEIF / AVIF**.
 
+[![CI](https://github.com/unpins/heif/actions/workflows/heif.yml/badge.svg)](https://github.com/unpins/heif/actions)
+![Linux](https://img.shields.io/badge/Linux-%E2%9C%93-success?logo=linux&logoColor=white)
+![macOS](https://img.shields.io/badge/macOS-%E2%9C%93-success?logo=apple&logoColor=white)
+![Windows](https://img.shields.io/badge/Windows-%E2%9C%93-success?logo=windows&logoColor=white)
+
 One static binary, no dependencies to install. Ships three tools as a single
 multicall binary (dispatch by program name):
 
@@ -30,6 +35,12 @@ $ unpin install heif
 `unpin` recreates the per-tool shims (`heif-enc`, `heif-dec`, `heif-info`) so
 each name dispatches to the right applet. You can also call the bare binary:
 `heif heif-enc …`.
+
+## Man pages
+
+`heif-enc.1`, `heif-dec.1` and `heif-info.1` are embedded in the binary — read
+with `unpin man heif <tool>`. `heif-thumbnailer.1` is excluded; that tool isn't
+shipped.
 
 ## Build notes
 

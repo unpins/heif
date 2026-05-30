@@ -303,6 +303,18 @@ CBODY
       while IFS= read -r a; do
         [ -n "$a" ] && ln -s ${name} "$out/bin/$a"
       done < multicall/apps.list
+
+      # The custom installPhase replaces CMake's `make install`, which would have
+      # installed examples/heif-{enc,dec,info}.1. Re-install those three static
+      # source pages (drop heif-thumbnailer.1 — that tool isn't built) so withMan
+      # embeds them. They're identical across platforms, so each target harvests
+      # its own unpacked source — no cross-arch reference.
+      mkdir -p "$out/share/man/man1"
+      for m in heif-enc heif-dec heif-info; do
+        f="$(find "$NIX_BUILD_TOP" -path "*/examples/$m.1" -print -quit)"
+        [ -n "$f" ] || { echo "multicall: man page $m.1 not found in source" >&2; exit 1; }
+        install -m644 "$f" "$out/share/man/man1/$m.1"
+      done
       runHook postInstall
     '';
   });
