@@ -8,33 +8,32 @@ image tools — **encode, decode and inspect HEIC / HEIF / AVIF**.
 ![macOS](https://img.shields.io/badge/macOS-%E2%9C%93-success?logo=apple&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-%E2%9C%93-success?logo=windows&logoColor=white)
 
-One static binary, no dependencies to install. Ships three tools as a single
-multicall binary (dispatch by program name):
+One static binary, no dependencies to install. Ships three programs:
 
-| applet | what it does |
+| program | what it does |
 | --- | --- |
 | `heif-enc` | encode PNG/JPEG → HEIC (HEVC) or AVIF (AV1) |
 | `heif-dec` | decode HEIC/HEIF/AVIF → PNG/JPEG/Y4M |
 | `heif-info` | print metadata about a HEIF/AVIF file |
 
-```console
-$ heif-enc input.png -o out.heic
-$ heif-dec out.heic out.png
-$ heif-info out.heic
-```
-
 Codecs built in: **HEVC** encode (x265) + decode (libde265), **AV1** encode
 (aom) + decode (dav1d/aom). Image I/O: PNG, JPEG.
 
-## Install
+## Usage
 
-```console
-$ unpin install heif
+Run a program with [unpin](https://github.com/unpins/unpin):
+
+```bash
+unpin heif heif-enc input.png -o out.heic
+unpin heif heif-dec out.heic out.png
+unpin heif heif-info out.heic
 ```
 
-`unpin` recreates the per-tool shims (`heif-enc`, `heif-dec`, `heif-info`) so
-each name dispatches to the right applet. You can also call the bare binary:
-`heif heif-enc …`.
+To install the programs onto your PATH:
+
+```bash
+unpin install heif
+```
 
 ## Man pages
 
