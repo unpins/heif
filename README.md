@@ -1,20 +1,14 @@
 # heif
 
 Standalone, self-contained build of the [libheif](https://github.com/strukturag/libheif)
-image tools — **encode, decode and inspect HEIC / HEIF / AVIF**.
+image programs — **encode, decode and inspect HEIC / HEIF / AVIF**.
 
 [![CI](https://github.com/unpins/heif/actions/workflows/heif.yml/badge.svg)](https://github.com/unpins/heif/actions)
 ![Linux](https://img.shields.io/badge/Linux-%E2%9C%93-success?logo=linux&logoColor=white)
 ![macOS](https://img.shields.io/badge/macOS-%E2%9C%93-success?logo=apple&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-%E2%9C%93-success?logo=windows&logoColor=white)
 
-One static binary, no dependencies to install. Ships three programs:
-
-| program | what it does |
-| --- | --- |
-| `heif-enc` | encode PNG/JPEG → HEIC (HEVC) or AVIF (AV1) |
-| `heif-dec` | decode HEIC/HEIF/AVIF → PNG/JPEG/Y4M |
-| `heif-info` | print metadata about a HEIF/AVIF file |
+One static binary, no dependencies to install.
 
 Codecs built in: **HEVC** encode (x265) + decode (libde265), **AV1** encode
 (aom) + decode (dav1d/aom). Image I/O: PNG, JPEG.
@@ -34,6 +28,16 @@ To install the programs onto your PATH:
 ```bash
 unpin install heif
 ```
+
+`unpin install heif` creates the `heif-enc`, `heif-dec`, and `heif-info` commands.
+
+## Programs
+
+| command | what it does |
+| --- | --- |
+| `heif-enc` | encode PNG/JPEG → HEIC (HEVC) or AVIF (AV1) |
+| `heif-dec` | decode HEIC/HEIF/AVIF → PNG/JPEG/Y4M |
+| `heif-info` | print metadata about a HEIF/AVIF file |
 
 ## Man pages
 
