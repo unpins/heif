@@ -23,21 +23,11 @@ unpin heif heif-dec out.heic out.png
 unpin heif heif-info out.heic
 ```
 
-To install the programs onto your PATH:
+`unpin install heif` also creates the commands `heif-enc` (encode), `heif-dec` (decode) and `heif-info` (inspect):
 
 ```bash
 unpin install heif
 ```
-
-`unpin install heif` creates the `heif-enc`, `heif-dec`, and `heif-info` commands.
-
-## Programs
-
-| command | what it does |
-| --- | --- |
-| `heif-enc` | encode PNG/JPEG → HEIC (HEVC) or AVIF (AV1) |
-| `heif-dec` | decode HEIC/HEIF/AVIF → PNG/JPEG/Y4M |
-| `heif-info` | print metadata about a HEIF/AVIF file |
 
 ## Man pages
 
