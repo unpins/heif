@@ -1,14 +1,15 @@
 # heif
 
-Standalone, self-contained build of the [libheif](https://github.com/strukturag/libheif)
-image programs — **encode, decode and inspect HEIC / HEIF / AVIF**.
+The [libheif](https://github.com/strukturag/libheif) image programs — **encode,
+decode and inspect HEIC / HEIF / AVIF** — as a single self-contained binary,
+built natively for Linux, macOS, and Windows.
 
 [![CI](https://github.com/unpins/heif/actions/workflows/heif.yml/badge.svg)](https://github.com/unpins/heif/actions)
 ![Linux](https://img.shields.io/badge/Linux-%E2%9C%93-success?logo=linux&logoColor=white)
 ![macOS](https://img.shields.io/badge/macOS-%E2%9C%93-success?logo=apple&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-%E2%9C%93-success?logo=windows&logoColor=white)
 
-One static binary, no dependencies to install.
+Part of the [unpins](https://unpins.org) catalog; install it with [`unpin`](https://github.com/unpins/unpin): `unpin install heif`.
 
 Codecs built in: **HEVC** encode (x265) + decode (libde265), **AV1** encode
 (aom) + decode (dav1d/aom). Image I/O: PNG, JPEG.
