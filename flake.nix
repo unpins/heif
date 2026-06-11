@@ -127,7 +127,7 @@
       # no graft.
       # Multicall: `heif <applet> [args]` dispatches by argv[0]; the bare binary
       # takes the applet as its first arg. Smoke through that form.
-      smoke = [ "heif-enc" "--version" ];
+      smoke = [ "--unpin-program=heif-enc" "--version" ];
       smokePattern = "libheif";
 
       # Linux pkgsStatic links libstdc++ statically already. darwin: the C++
