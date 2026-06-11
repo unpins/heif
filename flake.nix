@@ -1,5 +1,5 @@
 {
-  description = "Standalone build of the libheif image tools (heif-enc / heif-dec / heif-info)";
+  description = "the libheif image tools (heif-enc / heif-dec / heif-info) as a single self-contained binary";
 
   nixConfig = {
     extra-substituters = [ "https://unpins.cachix.org" ];
