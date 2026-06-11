@@ -36,6 +36,25 @@ unpin install heif
 with `unpin man heif <tool>`. `heif-thumbnailer.1` is excluded; that tool isn't
 shipped.
 
+## Build locally
+
+```bash
+nix build github:unpins/heif
+./result/bin/heif heif-enc --help
+```
+
+Or run directly:
+
+```bash
+nix run github:unpins/heif -- heif-info out.heic
+```
+
+The first invocation will offer to add the [unpins.cachix.org](https://unpins.cachix.org) substituter so most pulls come pre-built.
+
+## Manual download
+
+The [Releases](https://github.com/unpins/heif/releases) page has standalone binaries for manual download.
+
 ## Build notes
 
 - Single multicall binary: libheif builds `heif-enc`/`heif-dec`/`heif-info` as
