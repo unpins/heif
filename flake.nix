@@ -21,6 +21,26 @@
     let
       ulib = unpins-lib.lib;
 
+      # Engine path (native Linux): two unpin-llvm adapter stdenvs, exactly as
+      # avif. libheif throws and is heavy C++; its external C++ codec libs
+      # (libde265/x265/libaom — all gcc/libstdc++ by default) are the tier-2
+      # wall, so rebuild THEM with the engine → libc++, matching libheif. lto
+      # stdenv for libheif (its app objects must be bitcode for the self-fold);
+      # no-lto ELF stdenv for the codec libs (their asm SIMD — x265/aom nasm,
+      # libde265 intrinsics — can't be bitcode, so stays plain ELF archives).
+      # dav1d + png/jpeg are C → stay gcc (C ABI links into a libc++ binary).
+      engStdenvs = pkgs:
+        let sp = pkgs.pkgsStatic;
+            mkEng = lto: ulib.unpinAdapterStdenv {
+              inherit pkgs;
+              target = sp.stdenv.hostPlatform.config;
+              native = pkgs.stdenv.buildPlatform.system == pkgs.stdenv.hostPlatform.system;
+              cxx = true;
+              inherit lto;
+              captureLinks = lto;
+            };
+        in { lto = mkEng true; elf = mkEng false; };
+
       # libheif with apps + encoders ON, wired onto a (static) pkgs scope.
       # Codec-chain fixes mirror avif/chafa: x265 (pkgsStatic emits split
       # 8/10/12-bit archives + rm's the .a in postInstall — nativeFixes.x265
@@ -30,13 +50,69 @@
       # JPEG reader). Each is identity off its gate, so other targets keep the
       # cache-hit lib. aom/libde265 need no lib-level fix — chafa already
       # cross-built them on every target.
-      mkHeifTools = scope:
+      mkHeifTools = eng: scope:
         let
           lib = scope.lib;
           host = scope.stdenv.hostPlatform;
-          p = scope.extend (final: prev:
+          # Engine pre-extend: swap the stdenv of the C++ codec libs (no-lto ELF)
+          # and libheif (lto) BEFORE the nativeFix/vmaf extend below, so the
+          # x265 fix + libaom enableVmaf override compose ON TOP of the engine
+          # stdenv (.override/.overrideAttrs chain through). No-op off-engine.
+          scope' =
+            if eng == null then scope
+            else scope.extend (final: prev: {
+              x265 = prev.x265.override { stdenv = eng.elf; };
+              libde265 = prev.libde265.override { stdenv = eng.elf; };
+              libaom = prev.libaom.override { stdenv = eng.elf; };
+              libheif = prev.libheif.override { stdenv = eng.lto; };
+            });
+          p = scope'.extend (final: prev:
             {
-              x265 = ulib.nativeFixes.x265 prev;
+              x265 =
+                let fixed = ulib.nativeFixes.x265 prev;
+                in if eng == null then fixed
+                else fixed.overrideAttrs (o: {
+                  # Engine: x265's 8/10/12-bit multilib merge is broken under the
+                  # engine on TWO fronts. (1) Every `ar -M` MRI ADDLIB merge —
+                  # CMake's own EXTRA_LIB combine AND the nativeFix's — DEDUPS
+                  # members by name (verified for both llvm-ar and GNU ar), and
+                  # all three bit-depths share object names (api.cpp.o, …), so
+                  # only the 8-bit copy survives → x265_10bit/x265_12bit::
+                  # x265_api_query stay UNDEFINED and heif-enc fails to link.
+                  # (2) Even a correct postBuild merge gets discarded: `ninja
+                  # install` re-runs CMake's combine, regenerating the deduped
+                  # 8-bit libx265.a. So merge in postINSTALL, on the INSTALLED
+                  # $out/lib/libx265.a, after nothing else can overwrite it.
+                  # Reliable merge = EXTRACT each bit-depth under unique names
+                  # then re-archive. The 10/12-bit archives are build-dir symlinks
+                  # with RELATIVE targets, so resolve them with `readlink -f`
+                  # while still in the build dir (postInstall cwd) BEFORE cd-ing
+                  # into the extract subdirs.
+                  postInstall = ''
+                    if [ -e libx265-10.a ] && [ -e libx265-12.a ] && [ -e "$out/lib/libx265.a" ]; then
+                      echo "engine: rebuilding x265 multilib from pure per-bit-depth objects"
+                      _l10=$(readlink -f libx265-10.a)
+                      _l12=$(readlink -f libx265-12.a)
+                      rm -rf _x265m && mkdir -p _x265m/b _x265m/c
+                      ( cd _x265m/b && $AR x "$_l10" && for f in *.o; do mv "$f" "u10_$f"; done )
+                      ( cd _x265m/c && $AR x "$_l12" && for f in *.o; do mv "$f" "u12_$f"; done )
+                      # Pure 8-bit objects come from THIS build dir's CMake target
+                      # object files (build-10bits/build-12bits are siblings, not
+                      # under cwd). The installed libx265.a can't be the 8-bit
+                      # source: it's the llvm-ar-DEDUPED EXTRA_LIB combine, which
+                      # dropped the 8-bit public api.cpp.o (plain x265_api_get /
+                      # x265_cleanup) for a namespaced copy. Exclude CMake's
+                      # compiler-probe temp objects.
+                      mapfile -t _o8 < <(find . -path '*CMakeFiles*' -name '*.o' \
+                        -not -path '*/CMakeTmp/*' -not -path '*/CMakeScratch/*' \
+                        -not -path '*CompilerId*' -not -path './_x265m/*')
+                      echo "engine: 8-bit objs=''${#_o8[@]} 10-bit=$(ls _x265m/b | wc -l) 12-bit=$(ls _x265m/c | wc -l)"
+                      rm -f "$out/lib/libx265.a"
+                      $AR qcs "$out/lib/libx265.a" "''${_o8[@]}" _x265m/b/*.o _x265m/c/*.o
+                      rm -rf _x265m
+                    fi
+                  '';
+                });
               # aom's vmaf-tuning code (vmaf.c.o) references libvmaf, but
               # libheif's FindAOM (unlike libavif's) does not reflect aom.pc's
               # `Requires: libvmaf` onto the link, so the encoder's pull of
@@ -116,7 +192,7 @@
 
       mk = pkgs: scope: extra:
         import ./multicall.nix { lib = pkgs.lib // ulib; }
-          ({ pkgs = scope; libheifTools = mkHeifTools scope; } // extra);
+          ({ pkgs = scope; libheifTools = mkHeifTools null scope; } // extra);
     in
     ulib.mkStandaloneFlake {
       inherit self;
@@ -129,6 +205,20 @@
       # takes the applet as its first arg. Smoke through that form.
       smoke = [ "--unpin-program=heif-enc" "--version" ];
       smokePattern = "libheif";
+
+      # Engine + bitcode self-fold (native Linux): libheif (apps on) → bitcode,
+      # heif-enc/heif-dec/heif-info self-fold into one `heif`. The C++ comes from
+      # libheif AND the SYSTEM codec libs libde265/x265/libaom (rebuilt with the
+      # engine → libc++); requires.cxx. darwin/windows keep the objcopy fold.
+      engine = "unpin-llvm";
+      multicall = {
+        programs = [
+          { name = "heif-enc"; }
+          { name = "heif-dec"; }
+          { name = "heif-info"; }
+        ];
+        requires.cxx = true;
+      };
 
       # Linux pkgsStatic links libstdc++ statically already. darwin: the C++
       # codec libs (x265/aom/libheif) pull `-lc++` → /usr/lib/libc++.1.dylib,
@@ -154,6 +244,9 @@
       # shared symbols ("418 duplicate symbols"), so we use libc++.a alone.
       # avif's C codecs never throw, so its plain fold was fine.
       build = pkgs:
+        if pkgs.stdenv.hostPlatform.isLinux
+        then mkHeifTools (engStdenvs pkgs) pkgs.pkgsStatic   # engine path → selfFold
+        else
         let sp = pkgs.pkgsStatic; in
         mk pkgs sp (pkgs.lib.optionalAttrs sp.stdenv.hostPlatform.isDarwin {
           # avif-exact recipe (proven on the shipped avif): plain scan of both
