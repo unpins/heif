@@ -21,49 +21,48 @@
     let
       ulib = unpins-lib.lib;
 
-      # Engine path (native Linux): two unpin-llvm adapter stdenvs, exactly as
+      # Engine path (native Linux): the unpin-llvm adapter stdenv, exactly as
       # avif. libheif throws and is heavy C++; its external C++ codec libs
       # (libde265/x265/libaom — all gcc/libstdc++ by default) are the tier-2
-      # wall, so rebuild THEM with the engine → libc++, matching libheif. lto
-      # stdenv for libheif (its app objects must be bitcode for the self-fold);
-      # no-lto ELF stdenv for the codec libs (their asm SIMD — x265/aom nasm,
-      # libde265 intrinsics — can't be bitcode, so stays plain ELF archives).
+      # wall, so rebuild THEM with the engine → libc++, matching libheif. All
+      # full-LTO: the asm SIMD (x265/aom nasm and .S) stays native inside an
+      # otherwise-bitcode archive and the mega link reads mixed archives fine.
       # dav1d + png/jpeg are C → stay gcc (C ABI links into a libc++ binary).
       engStdenvs = pkgs:
         let sp = pkgs.pkgsStatic;
-            mkEng = lto: ulib.unpinAdapterStdenv {
-              inherit pkgs;
-              target = sp.stdenv.hostPlatform.config;
-              native = pkgs.stdenv.buildPlatform.system == pkgs.stdenv.hostPlatform.system;
-              cxx = true;
-              inherit lto;
-              captureLinks = lto;
-            };
-        in { lto = mkEng true; elf = mkEng false; };
+        in {
+          lto = ulib.unpinAdapterStdenv {
+            inherit pkgs;
+            target = sp.stdenv.hostPlatform.config;
+            native = pkgs.stdenv.buildPlatform.system == pkgs.stdenv.hostPlatform.system;
+            cxx = true;
+            lto = true;
+            captureLinks = true;
+          };
+        };
 
       # libheif with apps + encoders ON, wired onto a (static) pkgs scope.
       # Codec-chain fixes mirror avif/chafa: x265 (pkgsStatic emits split
       # 8/10/12-bit archives + rm's the .a in postInstall — nativeFixes.x265
       # merges + preserves them, and rewrites x265.pc for static/mingw consumers)
-      # everywhere; dav1d on darwin (meson cpu_family='arm64' literal);
-      # libjpeg-turbo on riscv (RVV SIMD helper miscompiles, pulled via heifio's
-      # JPEG reader). Each is identity off its gate, so other targets keep the
-      # cache-hit lib. aom/libde265 need no lib-level fix — chafa already
-      # cross-built them on every target.
+      # everywhere; dav1d on darwin (meson cpu_family='arm64' literal). Each is
+      # identity off its gate, so other targets keep the cache-hit lib.
+      # aom/libde265 need no lib-level fix — chafa already cross-built them on
+      # every target.
       mkHeifTools = eng: scope:
         let
           lib = scope.lib;
           host = scope.stdenv.hostPlatform;
-          # Engine pre-extend: swap the stdenv of the C++ codec libs (no-lto ELF)
-          # and libheif (lto) BEFORE the nativeFix/vmaf extend below, so the
+          # Engine pre-extend: swap the stdenv of the C++ codec libs and libheif
+          # BEFORE the nativeFix/vmaf extend below, so the
           # x265 fix + libaom enableVmaf override compose ON TOP of the engine
           # stdenv (.override/.overrideAttrs chain through). No-op off-engine.
           scope' =
             if eng == null then scope
             else scope.extend (final: prev: {
-              x265 = prev.x265.override { stdenv = eng.elf; };
-              libde265 = prev.libde265.override { stdenv = eng.elf; };
-              libaom = prev.libaom.override { stdenv = eng.elf; };
+              x265 = prev.x265.override { stdenv = eng.lto; };
+              libde265 = prev.libde265.override { stdenv = eng.lto; };
+              libaom = prev.libaom.override { stdenv = eng.lto; };
               libheif = prev.libheif.override { stdenv = eng.lto; };
             });
           p = scope'.extend (final: prev:
@@ -103,7 +102,19 @@
                       # dropped the 8-bit public api.cpp.o (plain x265_api_get /
                       # x265_cleanup) for a namespaced copy. Exclude CMake's
                       # compiler-probe temp objects.
-                      mapfile -t _o8 < <(find . -path '*CMakeFiles*' -name '*.o' \
+                      #
+                      # On arm/aarch64 the assembly is NOT an ASM language target:
+                      # x265 assembles it with add_custom_command `-o <name>.S.o`
+                      # (CMakeLists 879-900), which writes to the build-dir ROOT,
+                      # outside CMakeFiles/. A CMakeFiles-only sweep therefore
+                      # dropped every NEON object and left heif-enc undefined on
+                      # x265_filterPixelToShort_*_neon & co. x86 escapes it —
+                      # there the asm goes through enable_language(ASM_NASM), so
+                      # nasm's objects DO land under CMakeFiles. Match assembly
+                      # objects by name wherever they sit; the 10/12-bit copies
+                      # need no such care (they come out of `ar x`).
+                      mapfile -t _o8 < <(find . \( -name '*.o' -o -name '*.obj' \) \
+                        \( -path '*CMakeFiles*' -o -name '*.S.o' -o -name '*.S.obj' \) \
                         -not -path '*/CMakeTmp/*' -not -path '*/CMakeScratch/*' \
                         -not -path '*CompilerId*' -not -path './_x265m/*')
                       echo "engine: 8-bit objs=''${#_o8[@]} 10-bit=$(ls _x265m/b | wc -l) 12-bit=$(ls _x265m/c | wc -l)"
@@ -120,8 +131,6 @@
               # `--tune=vmaf`, so drop aom's vmaf support outright — zero loss,
               # and it removes libvmaf from the closure on every target.
               libaom = prev.libaom.override { enableVmaf = false; };
-            } // lib.optionalAttrs host.isRiscV {
-              libjpeg = ulib.nativeFixes."libjpeg-turbo" prev;
             } // lib.optionalAttrs host.isDarwin {
               dav1d = ulib.nativeFixes.dav1d prev;
             });
@@ -206,10 +215,10 @@
       smoke = [ "--unpin-program=heif-enc" "--version" ];
       smokePattern = "libheif";
 
-      # Engine + bitcode self-fold (native Linux): libheif (apps on) → bitcode,
+      # Engine + bitcode self-fold: libheif (apps on) → bitcode,
       # heif-enc/heif-dec/heif-info self-fold into one `heif`. The C++ comes from
       # libheif AND the SYSTEM codec libs libde265/x265/libaom (rebuilt with the
-      # engine → libc++); requires.cxx. darwin/windows keep the objcopy fold.
+      # engine → libc++); requires.cxx. Only windows keeps the objcopy fold.
       engine = "unpin-llvm";
       multicall = {
         programs = [
@@ -220,41 +229,20 @@
         requires.cxx = true;
       };
 
-      # Linux pkgsStatic links libstdc++ statically already. darwin: the C++
-      # codec libs (x265/aom/libheif) pull `-lc++` → /usr/lib/libc++.1.dylib,
-      # which the unpins darwin allowlist rejects; fold libc++ in statically.
+      # darwin used to take multicall.nix, but the engine reaches darwin too, so
+      # its objects are bitcode and the fold's `llvm-objcopy --redefine-sym`
+      # cannot read them ("not recognized as a valid object file").
       #
-      # -force_load on the WHOLE libc++.a (not a plain scan, and not the separate
-      # libc++abi.a): this nixpkgs libc++ is built with the ABI library merged
-      # in (LIBCXX_ENABLE_STATIC_ABI_LIBRARY), so libc++.a already defines the
-      # full libc++abi surface — `__cxa_throw`, `__cxa_allocate_exception`, the
-      # type_info hierarchy (201 symbols shared with libc++abi.a). libheif is
-      # heavy C++ and throws; with a plain scan the exception entry points stay
-      # UNDEFINED in our objects and bind at runtime to the SYSTEM
-      # /usr/lib/libc++abi.dylib (re-exported via libSystem). That system build
-      # (macOS 15) uses "typed memory operations" operator new internally in its
-      # exception path, whose static initializer lives in the system
-      # libc++.dylib we are forbidden to link — so the first throw aborts:
-      # "typed operator new invoked before its static initializer". A strong
-      # operator-new override can't fix it because the bad call is made INSIDE
-      # the system dylib. force_load pulls every libc++.a object so `__cxa_*`
-      # and the whole runtime are DEFINED in the binary; libheif's throws bind
-      # to our copy (21.1.7, plain operator new, no TMO) and never touch the
-      # system dylib. force_load'ing libc++abi.a too would re-define those 201
-      # shared symbols ("418 duplicate symbols"), so we use libc++.a alone.
-      # avif's C codecs never throw, so its plain fold was fine.
-      build = pkgs:
-        if pkgs.stdenv.hostPlatform.isLinux
-        then mkHeifTools (engStdenvs pkgs) pkgs.pkgsStatic   # engine path → selfFold
-        else
-        let sp = pkgs.pkgsStatic; in
-        mk pkgs sp (pkgs.lib.optionalAttrs sp.stdenv.hostPlatform.isDarwin {
-          # avif-exact recipe (proven on the shipped avif): plain scan of both
-          # static archives, no force_load, no operator-new override. Testing
-          # whether heif's TMO abort was caused by our deviations (force_load +
-          # opnew.o) rather than anything intrinsic.
-          extraLinkFlags = "-nostdlib++ ${sp.libcxx}/lib/libc++.a ${sp.libcxx}/lib/libc++abi.a";
-        });
+      # The self-fold also settles what the old hand-rolled darwin link kept
+      # failing at. libheif is heavy C++ and throws; a plain scan of libc++.a
+      # left `__cxa_throw` & co. UNDEFINED, so they bound at runtime to the
+      # SYSTEM /usr/lib/libc++abi.dylib, whose macOS-15 exception path uses a
+      # "typed memory operations" operator new whose static initializer lives in
+      # the system libc++.dylib the allowlist forbids — first throw aborted with
+      # "typed operator new invoked before its static initializer". requires.cxx
+      # folds the engine's own libc++ statically into the binary, so the
+      # exception runtime is DEFINED locally and never reaches the system dylib.
+      build = pkgs: mkHeifTools (engStdenvs pkgs) pkgs.pkgsStatic;
 
       # mingw cross: fold the C++/thread runtime into the .exe (no libstdc++-6 /
       # libgcc_s / libwinpthread DLLs) with a plain static C++ link, but driven by
