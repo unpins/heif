@@ -13,8 +13,8 @@
   # DECODE-ONLY (examples off, encoders off — chafa just wants libheif.a to read
   # HEIC/AVIF): see nix-lib/native-overlay/libheif.nix. Here we turn the tools
   # back on AND re-enable the encoders the overlay dropped (x265 for HEVC/HEIC,
-  # aom for AV1/AVIF) so heif-enc can actually write, then post-link the three
-  # tools into a single `heif` binary (multicall.nix). The codec chain
+  # aom for AV1/AVIF) so heif-enc can actually write, then let nix-lib self-fold
+  # the three tools into a single `heif` binary. The codec chain
   # (libde265/x265/aom/dav1d + png/jpeg) is the SAME one chafa/avif proved across
   # all nine targets, so the deps are cache hits.
   outputs = { self, unpins-lib }:
@@ -49,7 +49,10 @@
       # identity off its gate, so other targets keep the cache-hit lib.
       # aom/libde265 need no lib-level fix — chafa already cross-built them on
       # every target.
-      mkHeifTools = eng: scope:
+      # `eng` is the per-package stdenv swap the NATIVE path needs (its engine
+      # swap is scoped to pkgsStatic); on the mingw cross multicall.windows =
+      # true swaps the whole set, so `engine` is true there with `eng` null.
+      mkHeifTools = { eng ? null, engine ? (eng != null) }: scope:
         let
           lib = scope.lib;
           host = scope.stdenv.hostPlatform;
@@ -69,7 +72,7 @@
             {
               x265 =
                 let fixed = ulib.nativeFixes.x265 prev;
-                in if eng == null then fixed
+                in if !engine then fixed
                 else fixed.overrideAttrs (o: {
                   # Engine: x265's 8/10/12-bit multilib merge is broken under the
                   # engine on TWO fronts. (1) Every `ar -M` MRI ADDLIB merge —
@@ -194,22 +197,17 @@
           ];
           doCheck = false;
           # The library-install plumbing (pkg-config/cmake export, thumbnailer
-          # wrapper) is irrelevant — multicall.nix only consumes the build-tree
-          # objects + heif-enc's link.txt.
+          # wrapper) is irrelevant — only the three tools and their man ship.
           postInstall = "";
         });
 
-      mk = pkgs: scope: extra:
-        import ./multicall.nix { lib = pkgs.lib // ulib; }
-          ({ pkgs = scope; libheifTools = mkHeifTools null scope; } // extra);
     in
     ulib.mkStandaloneFlake {
       inherit self;
       name = "heif";
-      # Embed heif-enc/heif-dec/heif-info man on every platform. multicall.nix
-      # installs the three static source pages into $out/share/man on every
-      # target, so the windows .exe harvests its OWN man — same set as native,
-      # no graft.
+      # Embed heif-enc/heif-dec/heif-info man on every platform: libheif's own
+      # cmake install stages the three pages, so the windows .exe harvests its
+      # OWN man — same set as native, no graft.
       # Multicall: `heif <applet> [args]` dispatches by argv[0]; the bare binary
       # takes the applet as its first arg. Smoke through that form.
       smoke = [ "--unpin-program=heif-enc" "--version" ];
@@ -221,6 +219,7 @@
       # engine → libc++); requires.cxx. Only windows keeps the objcopy fold.
       engine = "unpin-llvm";
       multicall = {
+        windows = true;
         programs = [
           { name = "heif-enc"; }
           { name = "heif-dec"; }
@@ -229,11 +228,7 @@
         requires.cxx = true;
       };
 
-      # darwin used to take multicall.nix, but the engine reaches darwin too, so
-      # its objects are bitcode and the fold's `llvm-objcopy --redefine-sym`
-      # cannot read them ("not recognized as a valid object file").
-      #
-      # The self-fold also settles what the old hand-rolled darwin link kept
+      # The self-fold settles what the old hand-rolled darwin link kept
       # failing at. libheif is heavy C++ and throws; a plain scan of libc++.a
       # left `__cxa_throw` & co. UNDEFINED, so they bound at runtime to the
       # SYSTEM /usr/lib/libc++abi.dylib, whose macOS-15 exception path uses a
@@ -242,19 +237,16 @@
       # "typed operator new invoked before its static initializer". requires.cxx
       # folds the engine's own libc++ statically into the binary, so the
       # exception runtime is DEFINED locally and never reaches the system dylib.
-      build = pkgs: mkHeifTools (engStdenvs pkgs) pkgs.pkgsStatic;
+      build = pkgs: mkHeifTools { eng = engStdenvs pkgs; } pkgs.pkgsStatic;
 
-      # mingw cross: fold the C++/thread runtime into the .exe (no libstdc++-6 /
-      # libgcc_s / libwinpthread DLLs) with a plain static C++ link, but driven by
-      # lld (-fuse-ld=lld) instead of binutils ld. The combined multicall link
-      # trips a binutils 2.44 PE bug that discards present archive COMDAT members
-      # (cxx11 _M_dispose / _Sp_counted_base::_M_release_last_use_cold / ios_failure
-      # typeinfos); lld's PE/COFF COMDAT handling links them cleanly, so no
-      # pre-merge / --start-group / --allow-multiple-definition is needed. -static
-      # folds libc/winpthread/libgcc; -static-libstdc++ the C++ runtime.
-      windowsBuild = pkgs:
-        mk pkgs (ulib.mingwStaticCross pkgs) {
-          extraLinkFlags = "-static -static-libgcc -static-libstdc++ -fuse-ld=lld";
-        };
+      # mingw cross. `engine = true` with no `eng`: the whole mingwW64 set is
+      # already on the engine adapter, so the per-package stdenv swaps are
+      # redundant — but x265's multilib merge still needs its engine-only
+      # postInstall rebuild, which used to key off `eng`. The old fold's
+      # extraLinkFlags are gone with it: -static/-static-libgcc/-static-libstdc++
+      # kept mingw-gcc's runtimes out of companion DLLs (the engine uses none of
+      # them), and -fuse-ld=lld dodged a binutils 2.44 PE COMDAT bug in a link
+      # that lld now performs anyway.
+      windowsBuild = pkgs: mkHeifTools { engine = true; } (ulib.mingwStaticCross pkgs);
     };
 }
