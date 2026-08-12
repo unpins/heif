@@ -96,8 +96,16 @@
                       _l10=$(readlink -f libx265-10.a)
                       _l12=$(readlink -f libx265-12.a)
                       rm -rf _x265m && mkdir -p _x265m/b _x265m/c
-                      ( cd _x265m/b && $AR x "$_l10" && for f in *.o; do mv "$f" "u10_$f"; done )
-                      ( cd _x265m/c && $AR x "$_l12" && for f in *.o; do mv "$f" "u12_$f"; done )
+                      # Glob every extracted member, never `*.o`: mingw's objects
+                      # are `.obj`, so a `.o` glob matched nothing, the rename
+                      # no-op'd and `ar` got the pattern back literally — it
+                      # errored on that one argument and still wrote an archive
+                      # holding the 8-bit objects alone. x265_10bit/12bit::
+                      # x265_api_get_215 then came up undefined in heif-enc. The
+                      # extract dirs hold nothing but `ar x` output, so `*` is
+                      # exactly the member list at any suffix.
+                      ( cd _x265m/b && $AR x "$_l10" && for f in *; do mv "$f" "u10_$f"; done )
+                      ( cd _x265m/c && $AR x "$_l12" && for f in *; do mv "$f" "u12_$f"; done )
                       # Pure 8-bit objects come from THIS build dir's CMake target
                       # object files (build-10bits/build-12bits are siblings, not
                       # under cwd). The installed libx265.a can't be the 8-bit
@@ -122,7 +130,7 @@
                         -not -path '*CompilerId*' -not -path './_x265m/*')
                       echo "engine: 8-bit objs=''${#_o8[@]} 10-bit=$(ls _x265m/b | wc -l) 12-bit=$(ls _x265m/c | wc -l)"
                       rm -f "$out/lib/libx265.a"
-                      $AR qcs "$out/lib/libx265.a" "''${_o8[@]}" _x265m/b/*.o _x265m/c/*.o
+                      $AR qcs "$out/lib/libx265.a" "''${_o8[@]}" _x265m/b/* _x265m/c/*
                       rm -rf _x265m
                     fi
                   '';
