@@ -58,9 +58,9 @@ The [Releases](https://github.com/unpins/heif/releases) page has standalone bina
 ## Build notes
 
 - Single multicall binary: libheif builds `heif-enc`/`heif-dec`/`heif-info` as
-  separate "examples". We post-link them into one `heif` (`multicall.nix`),
-  reusing `heif-enc`'s CMake `link.txt` (widest lib set) and splicing in the
-  other tools' `main` objects + an argv[0] dispatcher.
+  separate "examples". The unpin-llvm engine folds the three into one `heif` on
+  every platform, Windows included; which tool runs is decided by the name you
+  call it by.
 - Encoders re-enabled: the shared nix-lib overlay (used by `chafa`) builds
   libheif decode-only; here x265 (HEVC) + aom (AV1) are turned back on so
   `heif-enc` can write.
