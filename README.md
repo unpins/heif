@@ -11,42 +11,62 @@ built natively for Linux, macOS, and Windows.
 
 Part of the [unpins](https://unpins.org) catalog; install it with [`unpin`](https://github.com/unpins/unpin): `unpin install heif`.
 
-Codecs built in: **HEVC** encode (x265) + decode (libde265), **AV1** encode
-(aom) + decode (dav1d/aom). Image I/O: PNG, JPEG.
-
 ## Usage
 
 Run a program with [unpin](https://github.com/unpins/unpin):
 
 ```bash
-unpin heif heif-enc input.png -o out.heic
-unpin heif heif-dec out.heic out.png
-unpin heif heif-info out.heic
+unpin heif --unpin-program=heif-enc input.png -o out.heic
+unpin heif --unpin-program=heif-dec out.heic out.png
+unpin heif --unpin-program=heif-info out.heic
 ```
 
-`unpin install heif` also creates the commands `heif-enc` (encode), `heif-dec` (decode) and `heif-info` (inspect):
+To install the programs onto your PATH:
 
 ```bash
 unpin install heif
 ```
 
+`unpin install heif` creates the `heif-enc`, `heif-dec` and `heif-info` commands.
+
+## Programs
+
+| command | what it does |
+| --- | --- |
+| `heif-enc` | encode PNG or JPEG to HEIC / AVIF |
+| `heif-dec` | decode HEIC / AVIF to PNG, JPEG or y4m |
+| `heif-info` | print what is inside a HEIF file |
+
+## Codecs
+
+| format | encode | decode |
+| --- | --- | --- |
+| HEIC (HEVC) | x265 | libde265 |
+| AVIF (AV1) | aom | dav1d, aom |
+
+`heif-enc --list-encoders` and `heif-dec --list-decoders` print the same list
+from the binary you are holding.
+
+Image input and output is PNG and JPEG. TIFF output is not built in;
+`heif-dec out.tif` says so and exits 1.
+
 ## Man pages
 
 `heif-enc.1`, `heif-dec.1` and `heif-info.1` are embedded in the binary — read
-with `unpin man heif <tool>`. `heif-thumbnailer.1` is excluded; that tool isn't
-shipped.
+one with `unpin man heif <tool>`, e.g. `unpin man heif heif-enc`.
+`heif-thumbnailer.1` is not embedded: that tool isn't shipped.
 
 ## Build locally
 
 ```bash
 nix build github:unpins/heif
-./result/bin/heif heif-enc --help
+./result/bin/heif --unpin-program=heif-enc --help
 ```
 
 Or run directly:
 
 ```bash
-nix run github:unpins/heif -- heif-info out.heic
+nix run github:unpins/heif -- --unpin-program=heif-info out.heic
 ```
 
 The first invocation will offer to add the [unpins.cachix.org](https://unpins.cachix.org) substituter so most pulls come pre-built.
@@ -57,15 +77,14 @@ The [Releases](https://github.com/unpins/heif/releases) page has standalone bina
 
 ## Build notes
 
-- Single multicall binary: libheif builds `heif-enc`/`heif-dec`/`heif-info` as
-  separate "examples". The unpin-llvm engine folds the three into one `heif` on
-  every platform, Windows included; which tool runs is decided by the name you
-  call it by.
-- Encoders re-enabled: the shared nix-lib overlay (used by `chafa`) builds
-  libheif decode-only; here x265 (HEVC) + aom (AV1) are turned back on so
-  `heif-enc` can write.
-- `rav1e` (heavy Rust AV1 encoder), the gdk-pixbuf loader, AVC (x264/openh264),
-  VVC, SVT-AV1 and the thumbnailer/SDL2 viewer tools are all dropped — `heif-*`
-  with x265 + aom covers HEIC and AVIF.
-- Static everywhere: musl on Linux, static libc++ on macOS (only `libSystem`
-  remains), `-static` mingw on Windows (no companion DLLs).
+- **All three tools, one binary.** `unpin install heif` gives you `heif-enc`,
+  `heif-dec` and `heif-info` as ordinary commands; without installing, pick one
+  with `--unpin-program=heif-enc`.
+- **Encoders re-enabled.** The shared nix-lib overlay (the one
+  [chafa](https://github.com/unpins/chafa) uses) builds libheif decode-only;
+  here x265 (HEVC) and aom (AV1) are turned back on so `heif-enc` can write.
+- **Dropped:** `rav1e` (a heavy Rust AV1 encoder — aom already covers AV1), the
+  gdk-pixbuf loader, AVC (x264 / openh264), VVC, SVT-AV1, and the
+  thumbnailer / SDL2 viewer tools.
+- **Static everywhere:** musl on Linux, static libc++ on macOS (only
+  `libSystem` remains), `-static` mingw on Windows (no companion DLLs).

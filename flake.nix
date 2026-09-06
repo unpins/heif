@@ -21,6 +21,19 @@
     let
       ulib = unpins-lib.lib;
 
+      # 16x16 RGB PNG, base64. Input for the installCheck round-trip below; it
+      # lives here so the check needs no fetch and no extra source path.
+      probePngB64 =
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAByElEQVR42g2SURHAMAhDkYAEJFQC"
+        + "EpCAhElAAhKQUAlIQAISKmHZx27XMpI8ICJiYiE5dJTUyJz8oy8okrKoLt2mHpqlffRQjoeEz2FR"
+        + "NmN1/j724EyO4nu5mme4l9/jJRJhOSJ0hFXc5HPRTyykUm5JXMmWHXkr/WSI0Br1eB3S89lxP/Yd"
+        + "jXPzVJ28J/q8Obtn3mkiVVYT9aOfKpmyq3x6Qjt1Svfqa43RXK2nlwi2TQVNzRWfRm4QkrBJ67J3"
+        + "bdtyLNbusyJyZ//E9bipizk80eccvumvvK9Pe43f9XieRECCnDAPR5DBvzj4KL6X39Y39+v+7ny1"
+        + "Xz7QpgiOlKgTV6MtxmO/eBGUwRVy43TohG34i48IuDMEMLIUVrMdjXIDx0mVgCWdCKSbEHWiKq4r"
+        + "FadSa62eV381UZIFrnSLu3wK/vSVEWGUmA+g31BgQDYYvh2QRB9cXuqLKL4XyJSom3uk9/TTDuv0"
+        + "rq9vtGZbtd9GaprmbXl9iLAm04IhzirQTzjATAXijBbExhslQzsYuBDt8j7ZPju6ZQvt+DZjPRcs"
+        + "9a71yix2g94yEVYQe4VlwQZgrJgVBgCqQIX8CAWnkEdPFD76AU9OaBB/sIpCAAAAAElFTkSuQmCC";
+
       # Engine path (native Linux): the unpin-llvm adapter stdenv, exactly as
       # avif. libheif throws and is heavy C++; its external C++ codec libs
       # (libde265/x265/libaom — all gcc/libstdc++ by default) are the tier-2
@@ -29,16 +42,31 @@
       # otherwise-bitcode archive and the mega link reads mixed archives fine.
       # dav1d + png/jpeg are C → stay gcc (C ABI links into a libc++ binary).
       engStdenvs = pkgs:
-        let sp = pkgs.pkgsStatic;
-        in {
-          lto = ulib.unpinAdapterStdenv {
-            inherit pkgs;
+        let
+          sp = pkgs.pkgsStatic;
+          adapter = lto: ulib.unpinAdapterStdenv {
+            inherit pkgs lto;
             target = sp.stdenv.hostPlatform.config;
             native = pkgs.stdenv.buildPlatform.system == pkgs.stdenv.hostPlatform.system;
             cxx = true;
-            lto = true;
             captureLinks = true;
           };
+        in {
+          lto = adapter true;
+          # x265 is the ONE dep that cannot take full LTO on 32-bit x86. Under
+          # `lto = true` the i686 build comes out with a `strtod` that returns
+          # garbage: every `x265_param_parse` of a floating-point option lands
+          # outside its own range, so libheif's fixed `psy-rd=1.0` / `psy-rdoq=
+          # 1.0` are rejected ("Psy-rd strength must be between 0 and 5.0") and
+          # heif-enc cannot write HEIC at all — while AVIF and every decoder
+          # keep working, so nothing but a real encode shows it. Isolated: the
+          # integer options parse fine, `psy-rd=0` (the one value that skips
+          # `atof`) is accepted, and ffmpeg's own i686 x265 — same engine, no
+          # `lto = true` — parses `psy-rd=1.0` correctly. armv7l is 32-bit and
+          # unaffected, so this is x86-32 codegen, not a 32-bit ABI. Dropping
+          # LTO for x265 alone restores it: the i686 .heic then matches the
+          # other targets byte for byte.
+          x265 = adapter (!sp.stdenv.hostPlatform.isi686);
         };
 
       # libheif with apps + encoders ON, wired onto a (static) pkgs scope.
@@ -63,7 +91,7 @@
           scope' =
             if eng == null then scope
             else scope.extend (final: prev: {
-              x265 = prev.x265.override { stdenv = eng.lto; };
+              x265 = prev.x265.override { stdenv = eng.x265; };
               libde265 = prev.libde265.override { stdenv = eng.lto; };
               libaom = prev.libaom.override { stdenv = eng.lto; };
               libheif = prev.libheif.override { stdenv = eng.lto; };
@@ -203,7 +231,42 @@
             "-DBUILD_TESTING=OFF"
             "-DBUILD_DOCUMENTATION=OFF"
           ];
+          # libheif's own suite is `BUILD_TESTING` (catch2 + ~25 test binaries):
+          # it roughly triples the build of a package whose useful part is three
+          # CLI tools, and its encoder tests SKIP when an encoder is missing. The
+          # installCheck below is the cheap half that matters here — it runs a
+          # real encode.
           doCheck = false;
+          # A codec that fails to REGISTER and a codec that registers and cannot
+          # encode both leave `heif-enc --version` printing the same line. The
+          # second one shipped: full LTO on i686 broke x265's parameter parsing
+          # and HEIC encoding was dead for seven weeks with CI green. So encode
+          # for real, in the build, on every target the builder can execute.
+          # Both round-trips are lossless from the same source, so the two
+          # decoded PNGs must come out byte-identical; that one `cmp` covers
+          # x265 -> libde265 and aom -> dav1d at once.
+          doInstallCheck = scope.stdenv.buildPlatform.canExecute host;
+          inherit probePngB64;
+          installCheckPhase = ''
+            runHook preInstallCheck
+            _b="''${bin:-$out}/bin"
+            "$_b/heif-enc" --list-encoders > enc.txt
+            "$_b/heif-dec" --list-decoders > dec.txt
+            for want in "^- x265 = " "^- aom = "; do
+              grep -q "$want" enc.txt || { echo "missing encoder: $want"; cat enc.txt; exit 1; }
+            done
+            for want in "^- libde265 = " "^- dav1d = " "^- aom = "; do
+              grep -q "$want" dec.txt || { echo "missing decoder: $want"; cat dec.txt; exit 1; }
+            done
+            printf %s "$probePngB64" | base64 -d > probe.png
+            "$_b/heif-enc" -L -o probe.heic probe.png
+            "$_b/heif-enc" -A -L -o probe.avif probe.png
+            "$_b/heif-dec" probe.heic from-heic.png
+            "$_b/heif-dec" probe.avif from-avif.png
+            cmp from-heic.png from-avif.png
+            echo "installCheck: HEIC and AVIF lossless round-trips agree"
+            runHook postInstallCheck
+          '';
           # The library-install plumbing (pkg-config/cmake export, thumbnailer
           # wrapper) is irrelevant — only the three tools and their man ship.
           postInstall = "";
@@ -216,10 +279,17 @@
       # Embed heif-enc/heif-dec/heif-info man on every platform: libheif's own
       # cmake install stages the three pages, so the windows .exe harvests its
       # OWN man — same set as native, no graft.
-      # Multicall: `heif <applet> [args]` dispatches by argv[0]; the bare binary
-      # takes the applet as its first arg. Smoke through that form.
-      smoke = [ "--unpin-program=heif-enc" "--version" ];
-      smokePattern = "libheif";
+      # Multicall: the applet is chosen by argv[0] (the names `unpin install`
+      # puts on PATH) or by `--unpin-program=`; the bare binary lists them.
+      #
+      # Smoke on `--list-encoders`, not `--version`: this package exists to turn
+      # the encoders back on over a shared overlay that builds libheif
+      # decode-only, and `heif-enc --version` prints the same `libheif: 1.21.2`
+      # with no encoder registered at all. The pattern is a single grep -E line
+      # (that is all action-build applies), so it can name ONE of them; x265 is
+      # the one the overlay drops.
+      smoke = [ "--unpin-program=heif-enc" "--list-encoders" ];
+      smokePattern = "^- x265 = x265 HEVC encoder";
 
       # Engine + bitcode self-fold: libheif (apps on) → bitcode,
       # heif-enc/heif-dec/heif-info self-fold into one `heif`. The C++ comes from
