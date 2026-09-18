@@ -80,9 +80,8 @@ The [Releases](https://github.com/unpins/heif/releases) page has standalone bina
 - **All three tools, one binary.** `unpin install heif` gives you `heif-enc`,
   `heif-dec` and `heif-info` as ordinary commands; without installing, pick one
   with `--unpin-program=heif-enc`.
-- **Encoders re-enabled.** The shared nix-lib overlay (the one
-  [chafa](https://github.com/unpins/chafa) uses) builds libheif decode-only;
-  here x265 (HEVC) and aom (AV1) are turned back on so `heif-enc` can write.
+- **Encoders included.** x265 (HEVC) and aom (AV1) are enabled, so `heif-enc`
+  can write.
 - **Dropped:** `rav1e` (a heavy Rust AV1 encoder — aom already covers AV1), the
   gdk-pixbuf loader, AVC (x264 / openh264), VVC, SVT-AV1, and the
   thumbnailer / SDL2 viewer tools.
