@@ -19,6 +19,7 @@
 
 ### Changed
 
+- Updated to libheif 1.23.2.
 - README: `unpin heif heif-enc …` never selected a program; the form is
   `unpin heif --unpin-program=heif-enc …`, or install the binary and call
   `heif-enc` directly. Added the codec table and a note that TIFF output is not
