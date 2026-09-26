@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.23.4-1] - 2026-09-26
+
 ### Fixed
 
 - **`heif-enc` could not write HEIC on the 32-bit x86 (`i686-linux`) build.**
