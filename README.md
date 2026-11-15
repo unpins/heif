@@ -27,15 +27,18 @@ To install the programs onto your PATH:
 unpin install heif
 ```
 
-`unpin install heif` creates the `heif-enc`, `heif-dec` and `heif-info` commands.
+`unpin install heif` creates the `heif-enc`, `heif-dec`, `heif-info` and
+`heif-thumbnailer` commands, and `heif-convert`, upstream's older name for
+`heif-dec`.
 
 ## Programs
 
 | command | what it does |
 | --- | --- |
-| `heif-enc` | encode PNG or JPEG to HEIC / AVIF |
-| `heif-dec` | decode HEIC / AVIF to PNG, JPEG or y4m |
+| `heif-enc` | encode PNG, JPEG or TIFF to HEIC / AVIF |
+| `heif-dec` | decode HEIC / AVIF to PNG, JPEG, TIFF or y4m |
 | `heif-info` | print what is inside a HEIF file |
+| `heif-thumbnailer` | write a small PNG preview of a HEIF file |
 
 ## Codecs
 
@@ -47,14 +50,13 @@ unpin install heif
 `heif-enc --list-encoders` and `heif-dec --list-decoders` print the same list
 from the binary you are holding.
 
-Image input and output is PNG and JPEG. TIFF output is not built in;
-`heif-dec out.tif` says so and exits 1.
+Image input and output is PNG, JPEG and TIFF.
 
 ## Man pages
 
-`heif-enc.1`, `heif-dec.1` and `heif-info.1` are embedded in the binary — read
-one with `unpin man heif <tool>`, e.g. `unpin man heif heif-enc`.
-`heif-thumbnailer.1` is not embedded: that tool isn't shipped.
+`heif-enc.1`, `heif-dec.1`, `heif-info.1` and `heif-thumbnailer.1` are embedded
+in the binary — read one with `unpin man heif <program>`, e.g.
+`unpin man heif heif-enc`.
 
 ## Build locally
 
@@ -77,11 +79,6 @@ The [Releases](https://github.com/unpins/heif/releases) page has standalone bina
 
 ## Build notes
 
-- **All three programs, one binary.** `unpin install heif` gives you `heif-enc`,
-  `heif-dec` and `heif-info` as ordinary commands; without installing, pick one
-  with `--unpin-program=heif-enc`.
-- **Encoders included.** x265 (HEVC) and aom (AV1) are enabled, so `heif-enc`
-  can write.
-- **Dropped:** `rav1e` (a heavy Rust AV1 encoder — aom already covers AV1), the
-  gdk-pixbuf loader, AVC (x264 / openh264), VVC, SVT-AV1, and the
-  thumbnailer / SDL2 viewer programs.
+- **Not included:** `heif-view` (it needs SDL2), the gdk-pixbuf loader (a
+  plugin for other programs, not a command), AVC (x264 / OpenH264, off in
+  nixpkgs too) and WebP input (nixpkgs' libheif has none either).
