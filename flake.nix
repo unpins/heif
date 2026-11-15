@@ -34,39 +34,30 @@
         + "rq9vtGZbtd9GaprmbXl9iLAm04IhzirQTzjATAXijBbExhslQzsYuBDt8j7ZPju6ZQvt+DZjPRcs"
         + "9a71yix2g94yEVYQe4VlwQZgrJgVBgCqQIX8CAWnkEdPFD76AU9OaBB/sIpCAAAAAElFTkSuQmCC";
 
-      # Engine path (native Linux): the unpin-llvm adapter stdenv, exactly as
-      # avif. libheif throws and is heavy C++; its external C++ codec libs
-      # (libde265/x265/libaom — all gcc/libstdc++ by default) are the tier-2
-      # wall, so rebuild THEM with the engine → libc++, matching libheif. All
-      # full-LTO: the asm SIMD (x265/aom nasm and .S) stays native inside an
-      # otherwise-bitcode archive and the mega link reads mixed archives fine.
-      # dav1d + png/jpeg are C → stay gcc (C ABI links into a libc++ binary).
-      engStdenvs = pkgs:
-        let
-          sp = pkgs.pkgsStatic;
-          adapter = lto: ulib.unpinAdapterStdenv {
-            inherit pkgs lto;
-            target = sp.stdenv.hostPlatform.config;
-            native = pkgs.stdenv.buildPlatform.system == pkgs.stdenv.hostPlatform.system;
-            cxx = true;
-            captureLinks = true;
-          };
-        in {
-          lto = adapter true;
-          # x265 is the ONE dep that cannot take full LTO on 32-bit x86. Under
-          # `lto = true` the i686 build comes out with a `strtod` that returns
-          # garbage: every `x265_param_parse` of a floating-point option lands
-          # outside its own range, so libheif's fixed `psy-rd=1.0` / `psy-rdoq=
-          # 1.0` are rejected ("Psy-rd strength must be between 0 and 5.0") and
-          # heif-enc cannot write HEIC at all — while AVIF and every decoder
-          # keep working, so nothing but a real encode shows it. Isolated: the
-          # integer options parse fine, `psy-rd=0` (the one value that skips
-          # `atof`) is accepted, and ffmpeg's own i686 x265 — same engine, no
-          # `lto = true` — parses `psy-rd=1.0` correctly. armv7l is 32-bit and
-          # unaffected, so this is x86-32 codegen, not a 32-bit ABI. Dropping
-          # LTO for x265 alone restores it: the i686 .heic then matches the
-          # other targets byte for byte.
-          x265 = adapter (!sp.stdenv.hostPlatform.isi686);
+      # x265 is the one dep that cannot take full LTO on 32-bit x86. Under
+      # `lto = true` the i686 build comes out with a `strtod` that returns
+      # garbage: every `x265_param_parse` of a floating-point option lands
+      # outside its own range, so libheif's fixed `psy-rd=1.0` / `psy-rdoq=
+      # 1.0` are rejected ("Psy-rd strength must be between 0 and 5.0") and
+      # heif-enc cannot write HEIC at all — while AVIF and every decoder
+      # keep working, so nothing but a real encode shows it. Isolated: the
+      # integer options parse fine, `psy-rd=0` (the one value that skips
+      # `atof`) is accepted, and ffmpeg's own i686 x265 — same engine, no
+      # `lto = true` — parses `psy-rd=1.0` correctly. armv7l is 32-bit and
+      # unaffected, so this is x86-32 codegen, not a 32-bit ABI. Dropping
+      # LTO for x265 alone restores it: the i686 .heic then matches the
+      # other targets byte for byte. Everything else takes the engine's
+      # set-wide stdenv.
+      x265Stdenv = pkgs:
+        let sp = pkgs.pkgsStatic; in
+        if !sp.stdenv.hostPlatform.isi686 then null
+        else ulib.unpinAdapterStdenv {
+          inherit pkgs;
+          lto = false;
+          target = sp.stdenv.hostPlatform.config;
+          native = pkgs.stdenv.buildPlatform.system == pkgs.stdenv.hostPlatform.system;
+          cxx = true;
+          captureLinks = true;
         };
 
       # libheif with apps + encoders ON, wired onto a (static) pkgs scope.
@@ -77,10 +68,7 @@
       # identity off its gate, so other targets keep the cache-hit lib.
       # aom/libde265 need no lib-level fix — chafa already cross-built them on
       # every target.
-      # `eng` is the per-package stdenv swap the NATIVE path needs (its engine
-      # swap is scoped to pkgsStatic); on the mingw cross multicall.windows =
-      # true swaps the whole set, so `eng` is null there.
-      mkHeifTools = { eng ? null }: scope:
+      mkHeifTools = { x265Stdenv ? null }: scope:
         let
           tiffDeps = ''
             include(CMakeFindDependencyMacro)
@@ -107,17 +95,10 @@
           host = scope.stdenv.hostPlatform;
           tiffHas = n: lib.any (d: (d.pname or "") == n)
             (scope.libtiff.buildInputs ++ scope.libtiff.propagatedBuildInputs);
-          # Engine pre-extend: swap the stdenv of the C++ codec libs and libheif
-          # BEFORE the nativeFix/vmaf extend below, so the
-          # x265 fix + libaom enableVmaf override compose ON TOP of the engine
-          # stdenv (.override/.overrideAttrs chain through). No-op off-engine.
           scope' =
-            if eng == null then scope
+            if x265Stdenv == null then scope
             else scope.extend (final: prev: {
-              x265 = prev.x265.override { stdenv = eng.x265; };
-              libde265 = prev.libde265.override { stdenv = eng.lto; };
-              libaom = prev.libaom.override { stdenv = eng.lto; };
-              libheif = prev.libheif.override { stdenv = eng.lto; };
+              x265 = prev.x265.override { stdenv = x265Stdenv; };
             });
           p = scope'.extend (final: prev:
             {
@@ -301,7 +282,7 @@
       # "typed operator new invoked before its static initializer". requires.cxx
       # folds the engine's own libc++ statically into the binary, so the
       # exception runtime is DEFINED locally and never reaches the system dylib.
-      build = pkgs: mkHeifTools { eng = engStdenvs pkgs; } pkgs.pkgsStatic;
+      build = pkgs: mkHeifTools { x265Stdenv = x265Stdenv pkgs; } pkgs.pkgsStatic;
 
       windowsBuild = pkgs: mkHeifTools { } (ulib.mingwStaticCross pkgs);
     };
