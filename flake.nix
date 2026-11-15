@@ -82,8 +82,31 @@
       # true swaps the whole set, so `eng` is null there.
       mkHeifTools = { eng ? null }: scope:
         let
+          tiffDeps = ''
+            include(CMakeFindDependencyMacro)
+            find_dependency(ZLIB)
+            find_dependency(JPEG)
+            find_dependency(LibLZMA)
+            find_dependency(libdeflate CONFIG)
+            find_dependency(zstd CONFIG)
+            ${lib.optionalString (tiffHas "libwebp") "find_dependency(WebP CONFIG)"}
+            foreach(_tiff_dep IN ITEMS
+                "Deflate::Deflate=libdeflate::libdeflate_static"
+                "liblzma::liblzma=LibLZMA::LibLZMA"
+                "ZSTD::ZSTD=zstd::libzstd_static")
+              string(REPLACE "=" ";" _tiff_dep "''${_tiff_dep}")
+              list(GET _tiff_dep 0 _tiff_name)
+              list(GET _tiff_dep 1 _tiff_real)
+              if(NOT TARGET ''${_tiff_name})
+                add_library(''${_tiff_name} INTERFACE IMPORTED)
+                set_target_properties(''${_tiff_name} PROPERTIES
+                  INTERFACE_LINK_LIBRARIES ''${_tiff_real})
+              endif()
+            endforeach()'';
           lib = scope.lib;
           host = scope.stdenv.hostPlatform;
+          tiffHas = n: lib.any (d: (d.pname or "") == n)
+            (scope.libtiff.buildInputs ++ scope.libtiff.propagatedBuildInputs);
           # Engine pre-extend: swap the stdenv of the C++ codec libs and libheif
           # BEFORE the nativeFix/vmaf extend below, so the
           # x265 fix + libaom enableVmaf override compose ON TOP of the engine
@@ -106,6 +129,20 @@
               # `--tune=vmaf`, so drop aom's vmaf support outright — zero loss,
               # and it removes libvmaf from the closure on every target.
               libaom = prev.libaom.override { enableVmaf = false; };
+              # libtiff's static CMake config leaves "import dependencies" a
+              # TODO, so TIFF::tiff links targets nobody defines and
+              # find_package(TIFF) fails on Deflate::Deflate. Fill it in.
+              libtiff = prev.libtiff.overrideAttrs (o: {
+                postFixup = (o.postFixup or "") + ''
+                  substituteInPlace $dev/lib/cmake/tiff/tiff-config.cmake \
+                    --replace-fail '    # TODO: import dependencies' '${tiffDeps}'
+                '';
+              } // lib.optionalAttrs host.isMinGW {
+                # pkgsStatic propagates a static library's inputs, the mingw set
+                # does not, and the fold links only the propagated closure.
+                propagatedBuildInputs = (o.propagatedBuildInputs or [ ])
+                  ++ (o.buildInputs or [ ]);
+              });
             } // lib.optionalAttrs host.isDarwin {
               dav1d = ulib.nativeFixes.dav1d prev;
             });
@@ -126,7 +163,7 @@
             else (old.nativeBuildInputs or [ ]);
           # pkgsStatic auto-promotes buildInputs → propagatedBuildInputs, so the
           # drops must hit BOTH or the old closure (and rav1e's build) survives.
-          buildInputs = dropUnused (old.buildInputs or [ ]);
+          buildInputs = dropUnused (old.buildInputs or [ ]) ++ [ p.libtiff ];
           propagatedBuildInputs = dropUnused (old.propagatedBuildInputs or [ ]);
           # mingw: de265.h decorates its API with __declspec(dllimport) under
           # _WIN32 unless LIBDE265_STATIC_BUILD is defined, but libde265.pc
@@ -165,6 +202,15 @@
             "-DWITH_GDK_PIXBUF=OFF"
             "-DBUILD_TESTING=OFF"
             "-DBUILD_DOCUMENTATION=OFF"
+            # libtiff can bring libwebp along; nixpkgs' libheif has no WebP input.
+            "-DCMAKE_DISABLE_FIND_PACKAGE_WEBP=ON"
+          ] ++ lib.optionals host.isMinGW [
+            # CMake looks in <prefix>/lib/cmake/<name> only for Unix targets, so
+            # on Windows FindTIFF missed libtiff's config and took a bare
+            # libtiff.a without the codecs it links. Name the configs.
+            "-DTiff_DIR=${lib.getDev p.libtiff}/lib/cmake/tiff"
+            "-Dlibdeflate_DIR=${lib.getDev p.libdeflate}/lib/cmake/libdeflate"
+            "-Dzstd_DIR=${lib.getDev p.zstd}/lib/cmake/zstd"
           ];
           # libheif's own suite is `BUILD_TESTING` (catch2 + ~25 test binaries):
           # it roughly triples the build of a package whose useful part is three
