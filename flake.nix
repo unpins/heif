@@ -154,14 +154,7 @@
           #
           NIX_CFLAGS_COMPILE = (old.NIX_CFLAGS_COMPILE or "")
             + lib.optionalString host.isMinGW " -DLIBDE265_STATIC_BUILD";
-          postPatch = (old.postPatch or "") + ''
-            # examples/CMakeLists.txt builds heif-test unconditionally (no
-            # install, no option gate). We ship only enc/dec/info — exclude it
-            # from `all` so it is neither built nor able to break the build.
-            substituteInPlace examples/CMakeLists.txt \
-              --replace-fail 'add_executable(heif-test ''${getopt_sources}' \
-                             'add_executable(heif-test EXCLUDE_FROM_ALL ''${getopt_sources}'
-          '';
+          patches = (old.patches or [ ]) ++ [ ./heif-test-exclude-from-all.patch ];
           cmakeFlags = [
             "-DBUILD_SHARED_LIBS=OFF"
             "-DENABLE_PLUGIN_LOADING=OFF"   # static: codecs link in, no dlopen .so

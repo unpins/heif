@@ -1,0 +1,15 @@
+examples/CMakeLists.txt builds heif-test unconditionally (no install, no
+option gate). Only the installed programs ship: keep it out of `all`, so it
+is neither built nor able to break the build.
+
+--- a/examples/CMakeLists.txt
++++ b/examples/CMakeLists.txt
+@@ -135,7 +135,7 @@
+ endif ()
+ 
+ 
+-add_executable(heif-test ${getopt_sources}
++add_executable(heif-test EXCLUDE_FROM_ALL ${getopt_sources}
+         heif_test.cc
+         common.cc
+         common.h)
