@@ -79,8 +79,8 @@
       # every target.
       # `eng` is the per-package stdenv swap the NATIVE path needs (its engine
       # swap is scoped to pkgsStatic); on the mingw cross multicall.windows =
-      # true swaps the whole set, so `engine` is true there with `eng` null.
-      mkHeifTools = { eng ? null, engine ? (eng != null) }: scope:
+      # true swaps the whole set, so `eng` is null there.
+      mkHeifTools = { eng ? null }: scope:
         let
           lib = scope.lib;
           host = scope.stdenv.hostPlatform;
@@ -98,71 +98,7 @@
             });
           p = scope'.extend (final: prev:
             {
-              x265 =
-                let fixed = ulib.nativeFixes.x265 prev;
-                in if !engine then fixed
-                else fixed.overrideAttrs (o: {
-                  # Engine: x265's 8/10/12-bit multilib merge is broken under the
-                  # engine on TWO fronts. (1) Every `ar -M` MRI ADDLIB merge —
-                  # CMake's own EXTRA_LIB combine AND the nativeFix's — DEDUPS
-                  # members by name (verified for both llvm-ar and GNU ar), and
-                  # all three bit-depths share object names (api.cpp.o, …), so
-                  # only the 8-bit copy survives → x265_10bit/x265_12bit::
-                  # x265_api_query stay UNDEFINED and heif-enc fails to link.
-                  # (2) Even a correct postBuild merge gets discarded: `ninja
-                  # install` re-runs CMake's combine, regenerating the deduped
-                  # 8-bit libx265.a. So merge in postINSTALL, on the INSTALLED
-                  # $out/lib/libx265.a, after nothing else can overwrite it.
-                  # Reliable merge = EXTRACT each bit-depth under unique names
-                  # then re-archive. The 10/12-bit archives are build-dir symlinks
-                  # with RELATIVE targets, so resolve them with `readlink -f`
-                  # while still in the build dir (postInstall cwd) BEFORE cd-ing
-                  # into the extract subdirs.
-                  postInstall = ''
-                    if [ -e libx265-10.a ] && [ -e libx265-12.a ] && [ -e "$out/lib/libx265.a" ]; then
-                      echo "engine: rebuilding x265 multilib from pure per-bit-depth objects"
-                      _l10=$(readlink -f libx265-10.a)
-                      _l12=$(readlink -f libx265-12.a)
-                      rm -rf _x265m && mkdir -p _x265m/b _x265m/c
-                      # Glob every extracted member, never `*.o`: mingw's objects
-                      # are `.obj`, so a `.o` glob matched nothing, the rename
-                      # no-op'd and `ar` got the pattern back literally — it
-                      # errored on that one argument and still wrote an archive
-                      # holding the 8-bit objects alone. x265_10bit/12bit::
-                      # x265_api_get_215 then came up undefined in heif-enc. The
-                      # extract dirs hold nothing but `ar x` output, so `*` is
-                      # exactly the member list at any suffix.
-                      ( cd _x265m/b && $AR x "$_l10" && for f in *; do mv "$f" "u10_$f"; done )
-                      ( cd _x265m/c && $AR x "$_l12" && for f in *; do mv "$f" "u12_$f"; done )
-                      # Pure 8-bit objects come from THIS build dir's CMake target
-                      # object files (build-10bits/build-12bits are siblings, not
-                      # under cwd). The installed libx265.a can't be the 8-bit
-                      # source: it's the llvm-ar-DEDUPED EXTRA_LIB combine, which
-                      # dropped the 8-bit public api.cpp.o (plain x265_api_get /
-                      # x265_cleanup) for a namespaced copy. Exclude CMake's
-                      # compiler-probe temp objects.
-                      #
-                      # On arm/aarch64 the assembly is NOT an ASM language target:
-                      # x265 assembles it with add_custom_command `-o <name>.S.o`
-                      # (CMakeLists 879-900), which writes to the build-dir ROOT,
-                      # outside CMakeFiles/. A CMakeFiles-only sweep therefore
-                      # dropped every NEON object and left heif-enc undefined on
-                      # x265_filterPixelToShort_*_neon & co. x86 escapes it —
-                      # there the asm goes through enable_language(ASM_NASM), so
-                      # nasm's objects DO land under CMakeFiles. Match assembly
-                      # objects by name wherever they sit; the 10/12-bit copies
-                      # need no such care (they come out of `ar x`).
-                      mapfile -t _o8 < <(find . \( -name '*.o' -o -name '*.obj' \) \
-                        \( -path '*CMakeFiles*' -o -name '*.S.o' -o -name '*.S.obj' \) \
-                        -not -path '*/CMakeTmp/*' -not -path '*/CMakeScratch/*' \
-                        -not -path '*CompilerId*' -not -path './_x265m/*')
-                      echo "engine: 8-bit objs=''${#_o8[@]} 10-bit=$(ls _x265m/b | wc -l) 12-bit=$(ls _x265m/c | wc -l)"
-                      rm -f "$out/lib/libx265.a"
-                      $AR qcs "$out/lib/libx265.a" "''${_o8[@]}" _x265m/b/* _x265m/c/*
-                      rm -rf _x265m
-                    fi
-                  '';
-                });
+              x265 = ulib.nativeFixes.x265 prev;
               # aom's vmaf-tuning code (vmaf.c.o) references libvmaf, but
               # libheif's FindAOM (unlike libavif's) does not reflect aom.pc's
               # `Requires: libvmaf` onto the link, so the encoder's pull of
@@ -317,14 +253,6 @@
       # exception runtime is DEFINED locally and never reaches the system dylib.
       build = pkgs: mkHeifTools { eng = engStdenvs pkgs; } pkgs.pkgsStatic;
 
-      # mingw cross. `engine = true` with no `eng`: the whole mingwW64 set is
-      # already on the engine adapter, so the per-package stdenv swaps are
-      # redundant — but x265's multilib merge still needs its engine-only
-      # postInstall rebuild, which used to key off `eng`. The old fold's
-      # extraLinkFlags are gone with it: -static/-static-libgcc/-static-libstdc++
-      # kept mingw-gcc's runtimes out of companion DLLs (the engine uses none of
-      # them), and -fuse-ld=lld dodged a binutils 2.44 PE COMDAT bug in a link
-      # that lld now performs anyway.
-      windowsBuild = pkgs: mkHeifTools { engine = true; } (ulib.mingwStaticCross pkgs);
+      windowsBuild = pkgs: mkHeifTools { } (ulib.mingwStaticCross pkgs);
     };
 }
