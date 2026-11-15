@@ -8,15 +8,9 @@
 
   inputs.unpins-lib.url = "github:unpins/nix-lib";
 
-  # libheif ships its CLI tools (heif-enc / heif-dec / heif-info) under
-  # WITH_EXAMPLES. The shared nix-lib overlay used by chafa builds the library
-  # DECODE-ONLY (examples off, encoders off — chafa just wants libheif.a to read
-  # HEIC/AVIF): see nix-lib/native-overlay/libheif.nix. Here we turn the tools
-  # back on AND re-enable the encoders the overlay dropped (x265 for HEVC/HEIC,
-  # aom for AV1/AVIF) so heif-enc can actually write, then let nix-lib self-fold
-  # the three tools into a single `heif` binary. The codec chain
-  # (libde265/x265/aom/dav1d + png/jpeg) is the SAME one chafa/avif proved across
-  # all nine targets, so the deps are cache hits.
+  # libheif's programs (heif-enc, heif-dec, heif-info, heif-thumbnailer) are
+  # built from nixpkgs' libheif with its encoders on (x265 for HEIC, aom for
+  # AVIF), and folded into one `heif` binary.
   outputs = { self, unpins-lib }:
     let
       ulib = unpins-lib.lib;
@@ -60,14 +54,8 @@
           captureLinks = true;
         };
 
-      # libheif with apps + encoders ON, wired onto a (static) pkgs scope.
-      # Codec-chain fixes mirror avif/chafa: x265 (pkgsStatic emits split
-      # 8/10/12-bit archives + rm's the .a in postInstall — nativeFixes.x265
-      # merges + preserves them, and rewrites x265.pc for static/mingw consumers)
-      # everywhere; dav1d on darwin (meson cpu_family='arm64' literal). Each is
-      # identity off its gate, so other targets keep the cache-hit lib.
-      # aom/libde265 need no lib-level fix — chafa already cross-built them on
-      # every target.
+      # libheif with the programs and encoders on, over a static pkgs scope.
+      # x265 everywhere and dav1d on darwin take nix-lib's fixes.
       mkHeifTools = { x265Stdenv ? null }: scope:
         let
           tiffDeps = ''
@@ -127,12 +115,10 @@
             } // lib.optionalAttrs host.isDarwin {
               dav1d = ulib.nativeFixes.dav1d prev;
             });
-          # rav1e is a Rust AV1 encoder vendoring a multi-hundred-MB cargo tree
-          # (a tmpfs-filler) — aom covers AV1 encode, so drop it. gdk-pixbuf is
-          # the loader module we disable; it also transitively drags libtiff
-          # (whose static CMake export breaks heifio's find_package(TIFF)) and,
-          # on mingw, make-shell-wrapper-hook (splices to a bash that can't
-          # cross-compile). None are needed for the tools, so drop them.
+          # Inputs heif does not use: rav1e (off upstream by default; AV1 encode is
+          # aom's) and gdk-pixbuf (the loader module, turned off below), and on
+          # mingw make-shell-wrapper-hook, which splices to a bash that cannot
+          # cross-compile.
           dropUnused = lib.filter
             (x: !(builtins.elem (x.pname or x.name or "")
               [ "rav1e" "gdk-pixbuf" "make-shell-wrapper-hook" ]));
@@ -162,7 +148,7 @@
             "-DWITH_LIBDE265=ON"            # HEVC (HEIC)
             "-DWITH_DAV1D=ON"              # AV1 (AVIF) — fast decode
             "-DWITH_AOM_DECODER=ON"
-            # encoders (the whole point of heif-enc; overlay had these OFF)
+            # encoders
             "-DWITH_X265=ON"               # HEVC (HEIC)
             "-DWITH_AOM_ENCODER=ON"        # AV1 (AVIF)
             # codecs we don't ship a dep for / don't want pulled in
@@ -187,8 +173,8 @@
             "-Dzstd_DIR=${lib.getDev p.zstd}/lib/cmake/zstd"
           ];
           # libheif's own suite is `BUILD_TESTING` (catch2 + ~25 test binaries):
-          # it roughly triples the build of a package whose useful part is three
-          # CLI tools, and its encoder tests SKIP when an encoder is missing. The
+          # it roughly triples the build of a package whose useful part is four
+          # programs, and its encoder tests SKIP when an encoder is missing. The
           # installCheck below is the cheap half that matters here — it runs a
           # real encode.
           doCheck = false;
@@ -223,7 +209,7 @@
             runHook postInstallCheck
           '';
           # The library-install plumbing (pkg-config/cmake export, thumbnailer
-          # wrapper) is irrelevant — only the three tools and their man ship.
+          # wrapper) is irrelevant: only the programs and their man pages ship.
           postInstall = "";
         });
 
@@ -231,25 +217,21 @@
     ulib.mkStandaloneFlake {
       inherit self;
       name = "heif";
-      # Embed heif-enc/heif-dec/heif-info man on every platform: libheif's own
-      # cmake install stages the three pages, so the windows .exe harvests its
-      # OWN man — same set as native, no graft.
+      # libheif's own cmake install stages the programs' man pages on every
+      # platform, Windows included, so each binary embeds its own.
       # Multicall: the applet is chosen by argv[0] (the names `unpin install`
       # puts on PATH) or by `--unpin-program=`; the bare binary lists them.
       #
       # Smoke on `--list-encoders`, not `--version`: this package exists to turn
-      # the encoders back on over a shared overlay that builds libheif
-      # decode-only, and `heif-enc --version` prints the same `libheif: 1.21.2`
-      # with no encoder registered at all. The pattern is a single grep -E line
-      # (that is all action-build applies), so it can name ONE of them; x265 is
-      # the one the overlay drops.
+      # the encoders on, and `heif-enc --version` prints the same line with no
+      # encoder registered at all. The pattern is a single grep -E line
+      # (that is all action-build applies), so it can name ONE of them: x265,
+      # the one with a history of breaking.
       smoke = [ "--unpin-program=heif-enc" "--list-encoders" ];
       smokePattern = "^- x265 = x265 HEVC encoder";
 
-      # Engine + bitcode self-fold: libheif (apps on) → bitcode,
-      # heif-enc/heif-dec/heif-info self-fold into one `heif`. The C++ comes from
-      # libheif AND the SYSTEM codec libs libde265/x265/libaom (rebuilt with the
-      # engine → libc++); requires.cxx. Only windows keeps the objcopy fold.
+      # The engine builds libheif and its C++ codec libs (libde265, x265, libaom)
+      # against its own libc++, Windows included, hence requires.cxx.
       engine = "unpin-llvm";
       multicall = {
         windows = true;
