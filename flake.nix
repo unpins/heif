@@ -159,9 +159,8 @@
             "-DWITH_OpenH264_DECODER=OFF"
             "-DWITH_RAV1E=OFF"
             "-DWITH_SvtEnc=OFF"
-            # tools: enc/dec/info only
+            # programs: enc/dec/info/thumbnailer
             "-DWITH_EXAMPLES=ON"
-            "-DWITH_EXAMPLE_HEIF_THUMB=OFF"  # heif-thumbnailer (not shipped)
             "-DWITH_EXAMPLE_HEIF_VIEW=OFF"   # heif-view (needs SDL2)
             "-DWITH_GDK_PIXBUF=OFF"
             "-DBUILD_TESTING=OFF"
@@ -236,8 +235,13 @@
         windows = true;
         programs = [
           { name = "heif-enc"; }
-          { name = "heif-dec"; }
+          {
+            name = "heif-dec";
+            # upstream's old name for heif-dec, still installed beside it
+            aliases = [ { name = "heif-convert"; noMan = true; } ];
+          }
           { name = "heif-info"; }
+          { name = "heif-thumbnailer"; }
         ];
         requires.cxx = true;
       };
